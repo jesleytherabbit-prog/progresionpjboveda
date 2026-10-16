@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bóveda → Progresión de Personaje
 // @namespace    hp-avada-kedavra.progresion
-// @version      1.0
+// @version      1.1
 // @description  Lee la bóveda de grageas (todas sus páginas), suma los movimientos por mes y los pasa a la app Progresión de Personaje.
 // @match        https://hp-avada-kedavra.foroactivo.com/t*
 // @match        https://*.github.io/*
@@ -10,6 +10,8 @@
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/jesleytherabbit-prog/progresionpjboveda/main/boveda-a-progresion.user.js
+// @downloadURL  https://raw.githubusercontent.com/jesleytherabbit-prog/progresionpjboveda/main/boveda-a-progresion.user.js
 // ==/UserScript==
 
 (function () {
