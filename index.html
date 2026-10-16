@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Progresión de Personaje</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Didact+Gothic&family=DM+Mono:wght@400;500&family=Quicksand:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --crema:#FAF3E7; --papel:#FFFDF6; --cafe:#5C4433; --cafe-suave:#7A5C43; --verde:#3F5B41;
+  --tierra:#B08968; --linea:#E6D7C3;
+  --rosa:#F7D6E0; --rosa-f:#F2C2D4;
+  --menta:#D9F0E4; --menta-f:#C3E6D6;
+  --mantequilla:#FCEFC7; --mantequilla-f:#F8E29A;
+  --lila:#E7DCF5; --lila-f:#D9C7EF;
+  --cielo:#D9EEF7; --cielo-f:#C0E4F2;
+  --durazno:#FCE1D6; --salvia:#DCE8D0; --logrado:#C7DAB6;
+  --titulo:#EFD9EB;
+  --radio:14px;
+  --sombra:0 2px 0 rgba(92,68,51,.08), 0 6px 18px rgba(92,68,51,.07);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--crema); color:var(--cafe);
+  font-family:"Quicksand",system-ui,sans-serif; font-weight:500; line-height:1.4;
+  background-image:radial-gradient(rgba(176,137,104,.12) 1px, transparent 1px);
+  background-size:18px 18px;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:24px 16px 48px}
+h1,h2,.gothic{font-family:"Didact Gothic","Century Gothic",sans-serif}
+.num{font-family:"DM Mono",Consolas,monospace}
+
+/* franja de colores (fila 3 del excel) */
+.franja{display:grid; grid-template-columns:repeat(12,1fr); height:10px; border-radius:6px; overflow:hidden; margin:14px 0}
+.franja span:nth-child(12n+1){background:var(--rosa)} .franja span:nth-child(12n+2){background:var(--menta)}
+.franja span:nth-child(12n+3){background:var(--mantequilla)} .franja span:nth-child(12n+4){background:var(--lila)}
+.franja span:nth-child(12n+5){background:var(--cielo)} .franja span:nth-child(12n+6){background:var(--durazno)}
+.franja span:nth-child(12n+7){background:var(--salvia)} .franja span:nth-child(12n+8){background:var(--menta)}
+.franja span:nth-child(12n+9){background:var(--rosa)} .franja span:nth-child(12n+10){background:var(--cielo)}
+.franja span:nth-child(12n+11){background:var(--mantequilla)} .franja span:nth-child(12n+12){background:var(--lila)}
+
+header.cabecera{background:var(--titulo); border-radius:var(--radio); padding:22px 20px 16px; text-align:center; box-shadow:var(--sombra)}
+header h1{margin:0; font-size:clamp(20px,4vw,30px); letter-spacing:.08em; font-weight:400}
+header h1 b{font-weight:400; color:var(--tierra)}
+header p{margin:4px 0 0; color:var(--verde); font-size:14px}
+
+/* barra de controles */
+.controles{display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin-top:16px;
+  background:var(--papel); border:1px solid var(--linea); border-radius:var(--radio); padding:12px; box-shadow:var(--sombra)}
+.grupo{display:flex; flex-direction:column; gap:4px; min-width:0}
+.grupo label{font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--cafe-suave)}
+.fila{display:flex; gap:6px; align-items:center}
+select,input[type=text],input[type=number]{
+  font:inherit; color:var(--cafe); background:#fff; border:1.5px solid var(--linea); border-radius:10px; padding:7px 10px; min-width:0;
+}
+select:focus,input:focus{outline:2px solid var(--tierra); outline-offset:1px}
+.btn{font:inherit; font-size:13px; cursor:pointer; border:1.5px solid var(--linea); background:#fff; color:var(--cafe);
+  border-radius:10px; padding:7px 11px; white-space:nowrap; transition:transform .1s, background .15s}
+.btn:hover{background:var(--mantequilla)} .btn:active{transform:translateY(1px)}
+.btn.icono{padding:7px 10px}
+.btn.peligro:hover{background:var(--rosa)}
+.espacio{flex:1}
+
+/* tarjetas resumen */
+.resumen{display:grid; grid-template-columns:repeat(5,1fr) 1.1fr; gap:12px; margin-top:16px}
+.kpi{border-radius:var(--radio); overflow:hidden; box-shadow:var(--sombra); display:flex; flex-direction:column; border:1px solid rgba(92,68,51,.06)}
+.kpi .tit{font-family:"Didact Gothic",sans-serif; font-size:12.5px; font-weight:700; padding:8px 10px; text-align:center; letter-spacing:.03em}
+.kpi .val{flex:1; display:flex; align-items:center; justify-content:center; padding:12px 8px 14px; color:var(--verde); font-size:22px; font-weight:500; text-align:center}
+.kpi input{width:100%; max-width:150px; text-align:center; font-family:"DM Mono",monospace; font-size:20px; color:var(--verde); background:rgba(255,255,255,.55); border-color:rgba(92,68,51,.15)}
+.k1 .tit{background:var(--mantequilla)} .k1 .val{background:var(--mantequilla-f)}
+.k2 .tit{background:var(--cielo)} .k2 .val{background:var(--cielo-f); flex-direction:column; gap:6px}
+.k3 .tit{background:var(--menta)} .k3 .val{background:var(--menta-f)}
+.k4 .tit{background:var(--durazno)} .k4 .val{background:var(--rosa-f)}
+.k5 .tit{background:var(--lila)} .k5 .val{background:var(--lila-f); flex-direction:column; gap:8px}
+.kpi.ok .val{background:var(--logrado)!important}
+#falta.sup{font-size:17px}
+.mini{font-size:11px; color:var(--cafe-suave); font-family:"Quicksand",sans-serif}
+.linkbtn{background:none; border:0; color:var(--cafe-suave); text-decoration:underline dotted; cursor:pointer; font:inherit; font-size:11px; padding:0}
+.barra{width:85%; height:8px; background:rgba(255,255,255,.7); border-radius:6px; overflow:hidden}
+.barra i{display:block; height:100%; width:0; background:var(--verde); border-radius:6px; transition:width .4s}
+.animo{background:var(--papel); border:1px dashed var(--tierra); border-radius:var(--radio); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:10px; gap:4px; box-shadow:var(--sombra)}
+.animo .canasta{font-size:30px; line-height:1; color:var(--tierra)}
+.animo .msg{color:var(--verde); font-weight:700; font-size:13px}
+
+/* progresión mensual */
+.seccion{margin-top:22px}
+.seccion h2{margin:0; background:var(--tierra); color:#fff; font-size:16px; font-weight:400; letter-spacing:.1em; text-align:center; padding:9px; border-radius:var(--radio) var(--radio) 0 0}
+.panel{background:var(--papel); border:1px solid var(--linea); border-top:0; border-radius:0 0 var(--radio) var(--radio); padding:14px; box-shadow:var(--sombra)}
+.meses{display:grid; grid-template-columns:repeat(6,1fr); gap:10px}
+.mes{border:1px solid var(--linea); border-radius:12px; overflow:hidden; background:#fff; display:flex; flex-direction:column}
+.mes .nombre{font-family:"Didact Gothic",sans-serif; font-weight:700; font-size:12px; text-align:center; padding:6px 4px; letter-spacing:.04em}
+.mes .cuerpo{padding:8px; display:flex; flex-direction:column; gap:6px; align-items:center}
+.mes input{width:100%; text-align:center; font-family:"DM Mono",monospace; font-size:16px; color:var(--verde); background:var(--papel)}
+.mes .acum{font-size:11px; color:var(--cafe-suave); font-style:italic}
+.mes .acum b{font-family:"DM Mono",monospace; font-style:normal; color:var(--cafe); font-weight:500}
+.mes .pct{width:100%; text-align:center; font-family:"DM Mono",monospace; font-size:13px; color:var(--verde); background:var(--rosa); border-radius:8px; padding:3px 0}
+.mes .pct.ok{background:var(--logrado)}
+.mes.actual{outline:2px solid var(--tierra); outline-offset:-1px}
+.leyenda{font-size:11px; color:var(--cafe-suave); font-style:italic; margin:10px 2px 0}
+
+/* gráfico */
+.grafico svg{width:100%; height:auto; display:block}
+.grafico .vacio{color:var(--cafe-suave); font-size:14px; font-style:italic; text-align:center; padding:48px 8px; margin:0}
+.ref{display:flex; flex-wrap:wrap; gap:14px; justify-content:center; font-size:12px; margin-top:6px; color:var(--cafe-suave)}
+.ref span::before{content:""; display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-2px}
+.ref .r1::before{background:var(--mantequilla-f)} .ref .r2::before{background:var(--verde); height:3px; vertical-align:3px}
+.ref .r3::before{border-top:2px dashed var(--tierra); height:0; vertical-align:3px; border-radius:0}
+
+/* lema */
+.lema{margin-top:22px; background:var(--mantequilla); border-radius:var(--radio); padding:12px; text-align:center; box-shadow:var(--sombra)}
+.lema input{width:100%; max-width:520px; text-align:center; background:transparent; border:1.5px dashed transparent; font-weight:700; color:var(--cafe); letter-spacing:.06em}
+.lema input:hover,.lema input:focus{border-color:var(--tierra); background:rgba(255,255,255,.5)}
+footer{text-align:center; font-size:11px; color:var(--cafe-suave); margin-top:18px}
+
+.toast{position:fixed; left:50%; bottom:20px; transform:translateX(-50%) translateY(20px); background:var(--verde); color:#fff; padding:9px 16px; border-radius:10px; font-size:13px; opacity:0; pointer-events:none; transition:.25s}
+.toast.ver{opacity:1; transform:translateX(-50%)}
+
+dialog{border:0; border-radius:var(--radio); padding:0; background:var(--papel); color:var(--cafe); box-shadow:0 20px 50px rgba(92,68,51,.3); width:min(92vw,420px)}
+dialog::backdrop{background:rgba(92,68,51,.3)}
+dialog form{padding:18px; display:flex; flex-direction:column; gap:12px}
+dialog h3{margin:0; font-family:"Didact Gothic",sans-serif; font-weight:400; letter-spacing:.05em}
+dialog p{margin:0; font-size:14px}
+dialog input{width:100%}
+dialog .acciones{display:flex; justify-content:flex-end; gap:8px}
+
+@media (max-width:900px){
+  .resumen{grid-template-columns:repeat(3,1fr)}
+  .meses{grid-template-columns:repeat(4,1fr)}
+}
+@media (max-width:600px){
+  .resumen{grid-template-columns:repeat(2,1fr)}
+  .meses{grid-template-columns:repeat(2,1fr)}
+  .espacio{display:none}
+  .controles .grupo{flex:1 1 100%}
+  .controles .grupo select{flex:1}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="cabecera">
+    <h1><b>✿</b> PROGRESIÓN DE PERSONAJE <b>✿</b></h1>
+    <p>❀ Seguimiento anual ❀</p>
+  </header>
+
+  <div class="franja" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+
+  <section class="controles" aria-label="Personaje y año">
+    <div class="grupo">
+      <label for="selPj">Personaje</label>
+      <div class="fila">
+        <select id="selPj"></select>
+        <button class="btn icono" id="btnPjNuevo" title="Nuevo personaje">＋</button>
+        <button class="btn icono" id="btnPjRenombrar" title="Renombrar">✎</button>
+        <button class="btn icono peligro" id="btnPjBorrar" title="Borrar personaje">✕</button>
+      </div>
+    </div>
+    <div class="grupo">
+      <label for="selAnio">Año</label>
+      <div class="fila">
+        <select id="selAnio"></select>
+        <button class="btn icono" id="btnAnioNuevo" title="Agregar año">＋</button>
+        <button class="btn icono peligro" id="btnAnioBorrar" title="Borrar año">✕</button>
+      </div>
+    </div>
+    <div class="espacio"></div>
+    <div class="grupo">
+      <label>Datos</label>
+      <div class="fila">
+        <button class="btn" id="btnExportar" title="Descargar copia de seguridad">⇩ Exportar</button>
+        <button class="btn" id="btnImportar" title="Cargar copia de seguridad">⇧ Importar</button>
+        <input type="file" id="archivo" accept="application/json,.json" hidden>
+        <button class="btn peligro" id="btnLimpiar" title="Vaciar este año">⟲ Vaciar año</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="resumen" aria-label="Resumen">
+    <div class="kpi k1">
+      <div class="tit">◎ Meta Anual</div>
+      <div class="val"><input type="number" id="metaAnual" min="0" step="1" placeholder="0" inputmode="numeric"></div>
+    </div>
+    <div class="kpi k2">
+      <div class="tit">▦ Meta Mensual</div>
+      <div class="val">
+        <input type="number" id="metaMensual" min="0" step="1" placeholder="0" inputmode="numeric">
+        <button class="linkbtn" id="btnDividir" title="Meta anual ÷ 12">usar anual ÷ 12</button>
+      </div>
+    </div>
+    <div class="kpi k3">
+      <div class="tit">✧ Progreso Total</div>
+      <div class="val num" id="total">0</div>
+    </div>
+    <div class="kpi k4" id="kFalta">
+      <div class="tit">☾ Falta p/ la Meta</div>
+      <div class="val num" id="falta">0</div>
+    </div>
+    <div class="kpi k5" id="kPct">
+      <div class="tit">↗ % Completado</div>
+      <div class="val">
+        <span class="num" id="pct">0%</span>
+        <div class="barra"><i id="barraPct"></i></div>
+      </div>
+    </div>
+    <div class="animo">
+      <div class="canasta" aria-hidden="true">❦</div>
+      <div class="msg" id="animo">¡sigue así!</div>
+    </div>
+  </section>
+
+  <section class="seccion" aria-labelledby="tMeses">
+    <h2 id="tMeses" class="gothic">✦ PROGRESIÓN MENSUAL ✦</h2>
+    <div class="panel">
+      <div class="meses" id="meses"></div>
+      <p class="leyenda" id="leyenda">% de la meta mensual alcanzada por mes</p>
+    </div>
+  </section>
+
+  <section class="seccion grafico" aria-labelledby="tGraf">
+    <h2 id="tGraf" class="gothic">✦ CURVA DEL AÑO ✦</h2>
+    <div class="panel">
+      <div id="grafico"></div>
+      <div class="ref"><span class="r1">Puntos del mes</span><span class="r2">Acumulado</span><span class="r3">Meta anual</span></div>
+    </div>
+  </section>
+
+  <div class="lema"><input type="text" id="lema" maxlength="80" aria-label="Lema" placeholder="TU PUEDES (?"></div>
+
+  <footer>Se guarda solo en este navegador · usá Exportar para hacer copia o pasarla a otra compu</footer>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<dialog id="dlg">
+  <form method="dialog">
+    <h3 id="dlgTitulo"></h3>
+    <p id="dlgTexto"></p>
+    <input type="text" id="dlgInput" maxlength="40">
+    <div class="acciones">
+      <button class="btn" value="no">Cancelar</button>
+      <button class="btn" value="si" id="dlgOk" style="background:var(--menta)">Aceptar</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(() => {
+  const CLAVE = "progresion-personaje-v1";
+  const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  const COLORES = ["--rosa","--menta","--mantequilla","--lila","--cielo","--durazno","--salvia","--rosa","--menta","--mantequilla","--lila","--cielo"];
+  const ANIO_ACTUAL = new Date().getFullYear();
+  const $ = id => document.getElementById(id);
+  const fmt = n => Math.round(n).toLocaleString("es-AR");
+  const uid = () => Math.random().toString(36).slice(2, 10);
+
+  const anioVacio = () => ({ metaAnual: null, metaMensual: null, meses: Array(12).fill(null) });
+  const pjNuevo = nombre => ({ id: uid(), nombre, lema: "", anioActivo: String(ANIO_ACTUAL), anios: { [ANIO_ACTUAL]: anioVacio() } });
+
+  // ---------- estado ----------
+  let estado;
+  function cargar() {
+    try {
+      const raw = localStorage.getItem(CLAVE);
+      if (raw) { const e = JSON.parse(raw); if (valido(e)) return e; }
+    } catch (_) {}
+    const pj = pjNuevo("Mi personaje");
+    return { version: 1, activo: pj.id, personajes: [pj] };
+  }
+  function valido(e) {
+    return e && Array.isArray(e.personajes) && e.personajes.length &&
+      e.personajes.every(p => p && p.id && p.anios && typeof p.anios === "object");
+  }
+  function guardar() { try { localStorage.setItem(CLAVE, JSON.stringify(estado)); } catch (_) {} }
+
+  const pj = () => estado.personajes.find(p => p.id === estado.activo) || estado.personajes[0];
+  const datos = () => { const p = pj(); if (!p.anios[p.anioActivo]) p.anios[p.anioActivo] = anioVacio(); return p.anios[p.anioActivo]; };
+  const num = v => (typeof v === "number" && isFinite(v)) ? v : 0;
+
+  // ---------- render ----------
+  function renderSelectores() {
+    const sp = $("selPj");
+    sp.innerHTML = "";
+    estado.personajes.forEach(p => sp.add(new Option(p.nombre, p.id, false, p.id === estado.activo)));
+    const sa = $("selAnio"), p = pj();
+    sa.innerHTML = "";
+    Object.keys(p.anios).sort().forEach(a => sa.add(new Option(a, a, false, a === p.anioActivo)));
+    $("btnPjBorrar").disabled = estado.personajes.length < 2;
+    $("btnAnioBorrar").disabled = Object.keys(p.anios).length < 2;
+  }
+
+  function renderMeses() {
+    const cont = $("meses"), d = datos(), p = pj();
+    cont.innerHTML = "";
+    const mesHoy = (String(ANIO_ACTUAL) === p.anioActivo) ? new Date().getMonth() : -1;
+    MESES.forEach((m, i) => {
+      const el = document.createElement("div");
+      el.className = "mes" + (i === mesHoy ? " actual" : "");
+      el.innerHTML = `
+        <div class="nombre" style="background:var(${COLORES[i]})">${m}</div>
+        <div class="cuerpo">
+          <input type="number" min="0" step="1" placeholder="0" inputmode="numeric" aria-label="Puntos de ${m}" data-mes="${i}">
+          <div class="acum">acumulado <b data-acum="${i}">0</b></div>
+          <div class="pct" data-pct="${i}" title="% de la meta mensual">0%</div>
+        </div>`;
+      const inp = el.querySelector("input");
+      inp.value = d.meses[i] ?? "";
+      inp.addEventListener("input", () => { d.meses[i] = leer(inp); guardar(); calcular(); });
+      cont.appendChild(el);
+    });
+  }
+
+  function renderCampos() {
+    const d = datos(), p = pj();
+    $("metaAnual").value = d.metaAnual ?? "";
+    $("metaMensual").value = d.metaMensual ?? "";
+    $("lema").value = p.lema || "";
+  }
+
+  function leer(inp) {
+    if (inp.value === "") return null;
+    const v = parseFloat(inp.value);
+    return isFinite(v) ? Math.max(0, v) : null;
+  }
+
+  function calcular() {
+    const d = datos();
+    const meta = num(d.metaAnual), metaMes = num(d.metaMensual);
+    const vals = d.meses.map(num);
+    let acum = 0;
+    const acumulados = vals.map(v => (acum += v));
+    const total = acum;
+    const falta = Math.max(meta - total, 0);
+    const pct = meta > 0 ? total / meta : 0;
+
+    $("total").textContent = fmt(total);
+    const superada = meta > 0 && falta <= 0;
+    $("falta").textContent = superada ? "¡Superada! ✧" : fmt(falta);
+    $("falta").classList.toggle("sup", superada);
+    $("kFalta").classList.toggle("ok", superada);
+    $("pct").textContent = Math.round(pct * 100) + "%";
+    $("barraPct").style.width = Math.min(pct, 1) * 100 + "%";
+    $("kPct").classList.toggle("ok", pct >= 1);
+
+    vals.forEach((v, i) => {
+      document.querySelector(`[data-acum="${i}"]`).textContent = fmt(acumulados[i]);
+      const c = document.querySelector(`[data-pct="${i}"]`);
+      const pm = metaMes > 0 ? v / metaMes : 0;
+      c.textContent = Math.round(pm * 100) + "%";
+      c.classList.toggle("ok", pm >= 1);
+    });
+    $("leyenda").textContent = `% de la meta mensual (${fmt(metaMes)}) alcanzada por mes`;
+
+    let msg;
+    if (meta <= 0) msg = "¡poné tu meta!";
+    else if (pct >= 1) msg = "¡meta cumplida!";
+    else if (pct >= .75) msg = "¡ya casi!";
+    else if (pct >= .5) msg = "¡vas por la mitad!";
+    else if (pct > 0) msg = "¡sigue así!";
+    else msg = "¡a empezar!";
+    $("animo").textContent = msg;
+
+    dibujar(vals, acumulados, meta);
+  }
+
+  // ---------- gráfico SVG ----------
+  function dibujar(vals, acum, meta) {
+    const W = 760, H = 260, L = 46, R = 14, T = 16, B = 30;
+    const iw = W - L - R, ih = H - T - B, paso = iw / 12;
+    const max = Math.max(meta, acum[11], ...vals, 0);
+    const ns = "http://www.w3.org/2000/svg";
+    if (max <= 0) {
+      $("grafico").innerHTML = `<p class="vacio">Cargá tu meta o tus puntos y acá aparece la curva ✿</p>`;
+      return;
+    }
+    const tope = escala(max);
+    const y = v => T + ih - (v / tope) * ih;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Progresión mensual y acumulada">`;
+    for (let k = 0; k <= 4; k++) {
+      const v = tope * k / 4, yy = y(v);
+      s += `<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="#E6D7C3" stroke-width="1"/>`;
+      s += `<text x="${L-6}" y="${yy+4}" text-anchor="end" font-size="10" fill="#7A5C43" font-family="DM Mono,monospace">${corto(v)}</text>`;
+    }
+    const bw = paso * .56;
+    vals.forEach((v, i) => {
+      const x = L + paso * i + (paso - bw) / 2, h = (v / tope) * ih;
+      s += `<rect x="${x}" y="${T+ih-h}" width="${bw}" height="${Math.max(h,0)}" rx="4" fill="#F8E29A"><title>${MESES[i]}: ${fmt(v)}</title></rect>`;
+      s += `<text x="${L+paso*i+paso/2}" y="${H-10}" text-anchor="middle" font-size="10.5" fill="#5C4433">${MESES[i].slice(0,3)}</text>`;
+    });
+    if (meta > 0) {
+      s += `<line x1="${L}" x2="${W-R}" y1="${y(meta)}" y2="${y(meta)}" stroke="#B08968" stroke-width="1.6" stroke-dasharray="6 5"/>`;
+      s += `<text x="${W-R}" y="${y(meta)-5}" text-anchor="end" font-size="10.5" fill="#B08968">meta ${fmt(meta)}</text>`;
+    }
+    const pts = acum.map((v, i) => `${L+paso*i+paso/2},${y(v)}`).join(" ");
+    s += `<polyline points="${pts}" fill="none" stroke="#3F5B41" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    acum.forEach((v, i) => {
+      s += `<circle cx="${L+paso*i+paso/2}" cy="${y(v)}" r="3.6" fill="#FFFDF6" stroke="#3F5B41" stroke-width="2"><title>Acumulado a ${MESES[i]}: ${fmt(v)}</title></circle>`;
+    });
+    s += `</svg>`;
+    $("grafico").innerHTML = s;
+  }
+  function escala(m) {
+    const p = Math.pow(10, Math.floor(Math.log10(m)));
+    for (const f of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (f * p >= m) return f * p;
+    return 10 * p;
+  }
+  const corto = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString("es-AR") + "k" : fmt(v);
+
+  function todo() { renderSelectores(); renderCampos(); renderMeses(); calcular(); }
+
+  // ---------- diálogos ----------
+  function preguntar({ titulo, texto = "", valor = null, ok = "Aceptar" }) {
+    return new Promise(res => {
+      const dlg = $("dlg"), inp = $("dlgInput");
+      $("dlgTitulo").textContent = titulo;
+      $("dlgTexto").textContent = texto;
+      $("dlgTexto").hidden = !texto;
+      inp.hidden = valor === null;
+      inp.value = valor ?? "";
+      $("dlgOk").textContent = ok;
+      dlg.returnValue = "";
+      dlg.onclose = () => res(dlg.returnValue === "si" ? (valor === null ? true : inp.value.trim()) : null);
+      dlg.showModal();
+      if (valor !== null) { inp.focus(); inp.select(); }
+    });
+  }
+  function aviso(t) { const el = $("toast"); el.textContent = t; el.classList.add("ver"); clearTimeout(aviso._t); aviso._t = setTimeout(() => el.classList.remove("ver"), 1800); }
+
+  // ---------- eventos ----------
+  $("metaAnual").addEventListener("input", e => { datos().metaAnual = leer(e.target); guardar(); calcular(); });
+  $("metaMensual").addEventListener("input", e => { datos().metaMensual = leer(e.target); guardar(); calcular(); });
+  $("btnDividir").addEventListener("click", () => {
+    const d = datos(); if (!num(d.metaAnual)) { aviso("Primero poné la meta anual"); return; }
+    d.metaMensual = Math.round(d.metaAnual / 12); $("metaMensual").value = d.metaMensual; guardar(); calcular();
+  });
+  $("lema").addEventListener("input", e => { pj().lema = e.target.value; guardar(); });
+
+  $("selPj").addEventListener("change", e => { estado.activo = e.target.value; guardar(); todo(); });
+  $("selAnio").addEventListener("change", e => { pj().anioActivo = e.target.value; guardar(); todo(); });
+
+  $("btnPjNuevo").addEventListener("click", async () => {
+    const n = await preguntar({ titulo: "Nuevo personaje", valor: "", ok: "Crear" });
+    if (!n) return;
+    const p = pjNuevo(n); estado.personajes.push(p); estado.activo = p.id; guardar(); todo(); aviso("Personaje creado ✿");
+  });
+  $("btnPjRenombrar").addEventListener("click", async () => {
+    const n = await preguntar({ titulo: "Renombrar personaje", valor: pj().nombre, ok: "Guardar" });
+    if (!n) return; pj().nombre = n; guardar(); renderSelectores();
+  });
+  $("btnPjBorrar").addEventListener("click", async () => {
+    if (estado.personajes.length < 2) return;
+    const ok = await preguntar({ titulo: "Borrar personaje", texto: `Se borra «${pj().nombre}» con todos sus años. No se puede deshacer.`, ok: "Borrar" });
+    if (!ok) return;
+    estado.personajes = estado.personajes.filter(p => p.id !== estado.activo);
+    estado.activo = estado.personajes[0].id; guardar(); todo();
+  });
+  $("btnAnioNuevo").addEventListener("click", async () => {
+    const p = pj(), anios = Object.keys(p.anios).map(Number);
+    const sug = String(Math.max(...anios, ANIO_ACTUAL - 1) + 1);
+    const a = await preguntar({ titulo: "Agregar año", valor: sug, ok: "Agregar" });
+    if (!a) return;
+    if (!/^\d{1,4}$/.test(a)) { aviso("Escribí un año en números"); return; }
+    if (!p.anios[a]) p.anios[a] = anioVacio();
+    p.anioActivo = a; guardar(); todo();
+  });
+  $("btnAnioBorrar").addEventListener("click", async () => {
+    const p = pj(); if (Object.keys(p.anios).length < 2) return;
+    const ok = await preguntar({ titulo: "Borrar año", texto: `Se borra ${p.anioActivo} de «${p.nombre}».`, ok: "Borrar" });
+    if (!ok) return;
+    delete p.anios[p.anioActivo]; p.anioActivo = Object.keys(p.anios).sort().pop(); guardar(); todo();
+  });
+  $("btnLimpiar").addEventListener("click", async () => {
+    const p = pj();
+    const ok = await preguntar({ titulo: "Vaciar año", texto: `Se borran metas y meses de ${p.anioActivo} de «${p.nombre}».`, ok: "Vaciar" });
+    if (!ok) return;
+    p.anios[p.anioActivo] = anioVacio(); guardar(); todo(); aviso("Año vaciado");
+  });
+
+  $("btnExportar").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(estado, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `progresion-personaje-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+  $("btnImportar").addEventListener("click", () => $("archivo").click());
+  $("archivo").addEventListener("change", async e => {
+    const f = e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    try {
+      const imp = JSON.parse(await f.text());
+      if (!valido(imp)) throw 0;
+      imp.personajes.forEach(p => { Object.values(p.anios).forEach(d => { if (!Array.isArray(d.meses) || d.meses.length !== 12) d.meses = Array(12).fill(null); }); if (!p.anios[p.anioActivo]) p.anioActivo = Object.keys(p.anios)[0]; });
+      if (!imp.personajes.some(p => p.id === imp.activo)) imp.activo = imp.personajes[0].id;
+      estado = imp; guardar(); todo(); aviso("Datos importados ✿");
+    } catch (_) { aviso("Ese archivo no es una copia válida"); }
+  });
+
+  estado = cargar();
+  todo();
+})();
+</script>
+</body>
+</html>
