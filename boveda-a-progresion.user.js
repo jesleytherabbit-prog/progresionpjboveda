@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bóveda → Progresión de Personaje
 // @namespace    hp-avada-kedavra.progresion
-// @version      2.3
+// @version      2.4
 // @description  Censo de todas las bóvedas (ranking de grageas, camadas por activación, casas, jugadores, inactivos) + progresión anual de cada personaje.
 // @match        https://hp-avada-kedavra.foroactivo.com/*
 // @match        https://*.github.io/*
@@ -138,7 +138,7 @@
     const busca = re => { const k = Object.keys(campos).find(k => re.test(k)); return k ? campos[k] : null; };
     const mov = busca(/añad|quit/);
     if (mov == null && busca(/actual/) == null) return null; // no es de grageas (ej. "Nuevo inventario")
-    return { ini: aNumero(busca(/inicial/)), mov: mov || "", act: aNumero(busca(/actual/)), tot: aNumero(busca(/total/)), concepto: busca(/enlace|concepto|motivo/) || "" };
+    return { ini: aNumero(busca(/inicial/)), mov: mov || "", act: aNumero(busca(/actual/)), tot: aNumero(busca(/total/)), concepto: (busca(/enlace|concepto|motivo/) || "") + " " + [...caja.querySelectorAll("a[href]")].map(a => decodeURIComponent(a.getAttribute("href"))).join(" ") };
   }
 
   function leerPerfil(pp) {
@@ -236,13 +236,15 @@
     const totFinal = usarCab ? cabTot : (postTot != null ? postTot : cabTot);
     let iniciales = Math.max(cabIni ?? 0, iniPost ?? 0) || (cabIni ?? iniPost);
     if (cabGen != null && totFinal != null && totFinal - cabGen >= 0) iniciales = totFinal - cabGen; // si la cabecera trae «Generales», manda
+    // solo se puede saber cuánto ganó si se conoce toda su veteranía/etapa: con «Generales» o con todos los movimientos leídos
+    const iniVerif = cabGen != null || completo;
     let ultimoMov = ult ? [ult[1], ult[2], ult[3]] : null;
     if (previo && previo.ultimoMov && fechaNum(previo.ultimoMov) > fechaNum(ultimoMov)) ultimoMov = previo.ultimoMov;
     if (usarCab && fechaEdic && fechaNum(fechaEdic) > fechaNum(ultimoMov)) ultimoMov = fechaEdic;
     return {
       tid: item.tid, num: item.num, nombreLista: item.nombre, slug,
       dueno, uid, ...perfil,
-      iniciales,
+      iniciales, iniVerif,
       actuales: usarCab ? cabAct : (ultAct ? ultAct[6] : cabAct),
       totales: totFinal,
       fuente: usarCab ? "cabecera" : "posts",
@@ -262,7 +264,7 @@
   }
   // en toda la historia se usan los números oficiales de la bóveda; en un año, la suma de los posts
   function ganado(b, anio) {
-    if (!anio && b.totales != null && b.iniciales != null) return Math.max(0, b.totales - b.iniciales);
+    if (!anio) return (b.iniVerif && b.totales != null && b.iniciales != null) ? Math.max(0, b.totales - b.iniciales) : null;
     return sumaPeriodo(b, anio).mas;
   }
   function gastado(b, anio) {
@@ -469,7 +471,10 @@
     </div>${avisoParcial()}`;
   }
   function avisoParcial() {
-    if (!pref.periodo) return "";
+    if (!pref.periodo) {
+      const sinVer = bovedas().filter(b => !b.iniVerif && !b.inactivo).length;
+      return sinVer ? `<p class="nota" style="margin:-4px 0 10px;color:#c2489a">✧ ${sinVer} bóveda${sinVer === 1 ? "" : "s"} todavía no tienen los movimientos leídos: su «ganadas» aparece como — porque sin eso no sé cuánto les llegó por veteranía o etapa. Para completarlas: Datos → «Leer movimientos».</p>` : "";
+    }
     const faltan = bovedas().filter(b => !b.completo).length;
     return faltan ? `<p class="nota" style="margin:-4px 0 10px;color:#c2489a">✧ ${faltan} bóveda${faltan === 1 ? "" : "s"} todavía no tienen los movimientos leídos, así que sus números de ${esc(pref.periodo)} pueden estar incompletos. Para completarlos: Datos → «Leer movimientos».</p>` : "";
   }
@@ -494,7 +499,7 @@
     return lista.map(b => {
       const vida = mesesDesde(b.activacion);
       return { b, actuales: b.actuales, totales: b.totales, ganadas: ganado(b, per), gastadas: gastado(b, per),
-        pormes: vida ? ganado(b) / vida : null, activacion: fechaNum(b.activacion), ultimo: fechaNum(b.ultimoMov), nombre: (b.dueno || "").toLowerCase() };
+        pormes: vida && ganado(b) != null ? ganado(b) / vida : null, activacion: fechaNum(b.activacion), ultimo: fechaNum(b.ultimoMov), nombre: (b.dueno || "").toLowerCase() };
     });
   }
   function ordenar(rows) {
@@ -538,8 +543,8 @@
     const anios = [...porAnio.keys()].sort((a, b) => b - a);
     c.innerHTML = filtros(c) + `<p class="nota" style="margin:-4px 0 12px">Cada camada son los personajes activados ese año. El podio es por grageas ganadas${per ? " en " + per : " en toda su historia"}.</p>` +
       (anios.length ? anios.map(a => {
-        const g = porAnio.get(a).map(b => ({ b, gan: ganado(b, per) })).sort((x, y) => y.gan - x.gan);
-        const tot = g.reduce((s, x) => s + x.gan, 0);
+        const g = porAnio.get(a).map(b => ({ b, gan: ganado(b, per) })).sort((x, y) => (y.gan ?? -1) - (x.gan ?? -1));
+        const tot = g.reduce((s, x) => s + (x.gan || 0), 0);
         return `<div class="caja"><h3>✦ Camada ${a} · ${g.length} personaje${g.length === 1 ? "" : "s"} · ${fmt(tot)} ganadas · promedio ${fmt(tot / g.length)}</h3>
           <table><tbody>${g.map((x, i) => `<tr class="top${i + 1}"><td class="pos num">${i + 1}</td><td>${linkBov(x.b)} ${chipCasa(x.b)}<span class="sub">activado ${fechaTxt(x.b.activacion)}</span></td><td class="num">${fmt(x.gan)}</td><td class="num">${fmt(x.b.actuales)} <span class="sub">actuales</span></td></tr>`).join("")}</tbody></table></div>`;
       }).join("") : `<div class="vacio"><b>✧</b>No hay camadas con esos filtros.</div>`);
