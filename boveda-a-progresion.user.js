@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bóveda → Progresión de Personaje
 // @namespace    hp-avada-kedavra.progresion
-// @version      2.0
+// @version      2.2
 // @description  Censo de todas las bóvedas (ranking de grageas, camadas por activación, casas, jugadores, inactivos) + progresión anual de cada personaje.
 // @match        https://hp-avada-kedavra.foroactivo.com/*
 // @match        https://*.github.io/*
@@ -86,6 +86,17 @@
     return Math.max(1, (h.getFullYear() - f[0]) * 12 + (h.getMonth() - f[1]) + 1);
   }
 
+  // texto de un elemento con " | " entre cada pedazo, para que "Iniciales</div><div>14.000" quede "Iniciales | 14.000"
+  function textoSeparado(el) {
+    const w = (el.ownerDocument || document).createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const partes = [];
+    for (let n; (n = w.nextNode());) {
+      if (n.parentNode && /^(STYLE|SCRIPT)$/.test(n.parentNode.nodeName)) continue;
+      const t = n.textContent.trim(); if (t) partes.push(t);
+    }
+    return partes.join(" | ");
+  }
+
   async function traer(url) {
     const r = await fetch(url, { credentials: "same-origin" });
     if (!r.ok) throw new Error(`HTTP ${r.status} en ${url}`);
@@ -127,7 +138,7 @@
     const busca = re => { const k = Object.keys(campos).find(k => re.test(k)); return k ? campos[k] : null; };
     const mov = busca(/añad|quit/);
     if (mov == null && busca(/actual/) == null) return null; // no es de grageas (ej. "Nuevo inventario")
-    return { ini: aNumero(busca(/inicial/)), mov: mov || "", act: aNumero(busca(/actual/)), tot: aNumero(busca(/total/)) };
+    return { ini: aNumero(busca(/inicial/)), mov: mov || "", act: aNumero(busca(/actual/)), tot: aNumero(busca(/total/)), concepto: busca(/enlace|concepto|motivo/) || "" };
   }
 
   function leerPerfil(pp) {
@@ -170,12 +181,17 @@
       const c = leerCaja(caja);
       if (!f || !c) return;
       const { mas, menos } = leerMovimiento(c.mov, c.ini, c.act);
-      movs.set(pid || `${fechaNum(f)}-${movs.size}`, [pid, f[0], f[1], f[2], mas, menos, c.act, c.tot, c.ini]);
+      // la veteranía (y similares) forman parte de las iniciales, no son grageas ganadas
+      const esInicial = /veteran|grageas? iniciales|bienvenida/i.test(c.concepto + " " + c.mov) ? 1 : 0;
+      movs.set(pid || `${fechaNum(f)}-${movs.size}`, [pid, f[0], f[1], f[2], esInicial ? 0 : mas, menos, c.act, c.tot, c.ini, esInicial ? mas : 0]);
     });
   }
 
   // Lee (o actualiza) una bóveda. previo = datos guardados o null
-  async function leerBoveda(item, previo, completo, aviso) {
+  // modo: "rapida"  → solo la 1ª página (cabecera + perfil); conserva los movimientos ya leídos
+  //       "movs"    → además lee las páginas nuevas (o todas, si nunca se leyó completa)
+  //       "completa"→ relee todas las páginas desde cero
+  async function leerBoveda(item, previo, modo, aviso) {
     const base = `/t${item.tid}`, slug = item.slug || "boveda";
     const urlPag = i => i ? `${base}p${i * POR_PAGINA}-${slug}` : `${base}-${slug}`;
     const doc0 = await traer(urlPag(0));
@@ -186,31 +202,47 @@
     const dueno = autor && autor.querySelector("strong") ? autor.querySelector("strong").textContent.trim() : (item.nombre || "");
     const uid = linkU ? (linkU.getAttribute("href").match(/\/u(\d+)/) || [])[1] : null;
     const perfil = leerPerfil(primero && primero.querySelector(".postprofile"));
-    // cabecera del primer post: "Grageas Iniciales: 4 000"
-    const cab = primero && primero.querySelector(".content") ? primero.querySelector(".content").textContent : "";
-    const mIni = cab.match(/gra[gj]eas\s+iniciales\s*:?\s*([\d .,  ]+)/i);
+    // cabecera del primer post ("Grageas Iniciales: 4 000" o una cabecera armada a mano con "Iniciales | 14.000")
+    const contCab = primero && primero.querySelector(".content");
+    const cab = contCab ? textoSeparado(contCab) : "";
+    const deCab = lab => {
+      const m = cab.match(new RegExp(`(?:gra[gj]eas\\s+)?${lab}\\s*[:»}]?\\s*(?:\\|\\s*)*(\\d{1,3}(?:[ .,\\u00a0\\u202f]\\d{3})+(?!\\d)|\\d+)`, "i"));
+      return m ? aNumero(m[1]) : null;
+    };
+    const cabIni = deCab("iniciales"), cabTot = deCab("totales"), cabAct = deCab("actuales");
+    const edic = primero ? (primero.textContent.match(/[UÚ]ltima edici[oó]n por .+? el (.+?),?\s*editado/i) || [])[1] : null;
+    const fechaEdic = edic ? leerFechaPost(edic) : null;
 
-    const movs = new Map((previo && !completo ? previo.movs : []).map(m => [m[0], m]));
+    const movs = new Map((previo && modo !== "completa" ? previo.movs || [] : []).map(m => [m[0], m]));
     leerPostsDePagina(doc0, movs);
-    const desde = previo && !completo ? Math.max(1, (previo.paginas || 1) - 1) : 1;
+    let completo = !!(previo && previo.completo && modo !== "completa"), leidas = previo ? previo.paginasLeidas || 1 : 1;
+    const desde = modo === "rapida" ? n : (completo ? Math.max(1, leidas - 1) : 1);
     for (let i = desde; i < n; i++) {
       aviso && aviso(i + 1, n);
       await dormir(PAUSA_MS);
       leerPostsDePagina(await traer(urlPag(i)), movs);
     }
+    if (modo !== "rapida") { completo = true; leidas = n; }
     const lista = [...movs.values()].sort((a, b) => (fechaNum([a[1], a[2], a[3]]) - fechaNum([b[1], b[2], b[3]])) || (a[0] - b[0]));
     const ult = lista[lista.length - 1];
     const ultTot = [...lista].reverse().find(m => m[7] != null);
     const ultAct = [...lista].reverse().find(m => m[6] != null);
-    const iniciales = mIni ? aNumero(mIni[1]) : (lista.length && lista[0][8] != null ? lista[0][8] : null);
+    // la cabecera actualizada es requisito del foro: si está, manda ella; si no, el último post leído
+    const postTot = ultTot ? ultTot[7] : null;
+    const usarCab = cabTot != null && cabAct != null;
+    const iniciales = cabIni != null ? cabIni
+      : (lista.length && lista[0][8] != null ? lista[0][8] + lista.reduce((s, m) => s + (m[9] || 0), 0) : null);
+    let ultimoMov = ult ? [ult[1], ult[2], ult[3]] : null;
+    if (previo && previo.ultimoMov && fechaNum(previo.ultimoMov) > fechaNum(ultimoMov)) ultimoMov = previo.ultimoMov;
+    if (usarCab && fechaEdic && fechaNum(fechaEdic) > fechaNum(ultimoMov)) ultimoMov = fechaEdic;
     return {
       tid: item.tid, num: item.num, nombreLista: item.nombre, slug,
       dueno, uid, ...perfil,
       iniciales,
-      actuales: ultAct ? ultAct[6] : (aNumero((cab.match(/gra[gj]eas\s+actuales\s*:?\s*([\d .,  ]+)/i) || [])[1])),
-      totales: ultTot ? ultTot[7] : (aNumero((cab.match(/gra[gj]eas\s+totales\s*:?\s*([\d .,  ]+)/i) || [])[1])),
-      ultimoMov: ult ? [ult[1], ult[2], ult[3]] : null,
-      paginas: n, movs: lista, leido: Date.now()
+      actuales: usarCab ? cabAct : (ultAct ? ultAct[6] : cabAct),
+      totales: usarCab ? cabTot : (postTot != null ? postTot : cabTot),
+      fuente: usarCab ? "cabecera" : "posts",
+      ultimoMov, paginas: n, paginasLeidas: leidas, completo, movs: lista, leido: Date.now()
     };
   }
 
@@ -224,13 +256,22 @@
     }
     return { mas, menos, cant };
   }
+  // en toda la historia se usan los números oficiales de la bóveda; en un año, la suma de los posts
+  function ganado(b, anio) {
+    if (!anio && b.totales != null && b.iniciales != null) return Math.max(0, b.totales - b.iniciales);
+    return sumaPeriodo(b, anio).mas;
+  }
+  function gastado(b, anio) {
+    if (!anio && b.totales != null && b.actuales != null) return Math.max(0, b.totales - b.actuales);
+    return sumaPeriodo(b, anio).menos;
+  }
   function mensual(b, anio, metrica) {
     const meses = Array(12).fill(0);
     const movs = b.movs || [];
     if (metrica === "totales") {
-      let previo = null; const ultimo = Array(12).fill(null);
-      for (const m of movs) { if (m[7] == null) continue; if (m[1] < anio) previo = m[7]; else if (m[1] === anio) ultimo[m[2]] = m[7]; }
-      for (let i = 0; i < 12; i++) { if (ultimo[i] == null) continue; meses[i] = previo == null ? 0 : Math.max(0, ultimo[i] - previo); previo = ultimo[i]; }
+      let previo = null; const ultimo = Array(12).fill(null), vet = Array(12).fill(0);
+      for (const m of movs) { if (m[1] === anio) vet[m[2]] += m[9] || 0; if (m[7] == null) continue; if (m[1] < anio) previo = m[7]; else if (m[1] === anio) ultimo[m[2]] = m[7]; }
+      for (let i = 0; i < 12; i++) { if (ultimo[i] == null) continue; meses[i] = previo == null ? 0 : Math.max(0, ultimo[i] - previo - vet[i]); previo = ultimo[i]; }
       return meses;
     }
     for (const m of movs) if (m[1] === anio) meses[m[2]] += metrica === "gastadas" ? m[5] : m[4];
@@ -421,7 +462,12 @@
       ${conCasa ? `<label class="c">Casa<select id="f-casa">${opt("", "Todas", pref.casa)}${[...CASAS, "Sin casa"].map(k => opt(k, k, pref.casa)).join("")}</select></label>` : ""}
       <label class="c">Etapa<select id="f-etapa">${opt("", "Todas", pref.etapa)}${etapas().map(e => opt(e, e, pref.etapa)).join("")}</select></label>
       <label class="c">Ganado / gastado en<select id="f-per">${opt("", "Toda la historia", pref.periodo)}${anios().map(a => opt(a, a, pref.periodo)).join("")}</select></label>
-    </div>`;
+    </div>${avisoParcial()}`;
+  }
+  function avisoParcial() {
+    if (!pref.periodo) return "";
+    const faltan = bovedas().filter(b => !b.completo).length;
+    return faltan ? `<p class="nota" style="margin:-4px 0 10px;color:#c2489a">✧ ${faltan} bóveda${faltan === 1 ? "" : "s"} todavía no tienen los movimientos leídos, así que sus números de ${esc(pref.periodo)} pueden estar incompletos. Para completarlos: Datos → «Leer movimientos».</p>` : "";
   }
   function enlazarFiltros(c) {
     const on = (id, k) => { const e = c.querySelector(id); if (!e) return; e.addEventListener(e.tagName === "INPUT" ? "input" : "change", () => { pref[k] = e.value; guardarPref(); pintar(); if (id === "#f-buscar") { const n = $("#f-buscar"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); };
@@ -442,11 +488,9 @@
   function filas(lista) {
     const per = pref.periodo ? +pref.periodo : null;
     return lista.map(b => {
-      const s = sumaPeriodo(b, per);
       const vida = mesesDesde(b.activacion);
-      const ganHist = (b.totales != null && b.iniciales != null) ? b.totales - b.iniciales : sumaPeriodo(b).mas;
-      return { b, actuales: b.actuales, totales: b.totales, ganadas: s.mas, gastadas: s.menos, movs: s.cant,
-        pormes: vida ? ganHist / vida : null, activacion: fechaNum(b.activacion), ultimo: fechaNum(b.ultimoMov), nombre: (b.dueno || "").toLowerCase() };
+      return { b, actuales: b.actuales, totales: b.totales, ganadas: ganado(b, per), gastadas: gastado(b, per),
+        pormes: vida ? ganado(b) / vida : null, activacion: fechaNum(b.activacion), ultimo: fechaNum(b.ultimoMov), nombre: (b.dueno || "").toLowerCase() };
     });
   }
   function ordenar(rows) {
@@ -490,7 +534,7 @@
     const anios = [...porAnio.keys()].sort((a, b) => b - a);
     c.innerHTML = filtros(c) + `<p class="nota" style="margin:-4px 0 12px">Cada camada son los personajes activados ese año. El podio es por grageas ganadas${per ? " en " + per : " en toda su historia"}.</p>` +
       (anios.length ? anios.map(a => {
-        const g = porAnio.get(a).map(b => ({ b, gan: sumaPeriodo(b, per).mas })).sort((x, y) => y.gan - x.gan);
+        const g = porAnio.get(a).map(b => ({ b, gan: ganado(b, per) })).sort((x, y) => y.gan - x.gan);
         const tot = g.reduce((s, x) => s + x.gan, 0);
         return `<div class="caja"><h3>✦ Camada ${a} · ${g.length} personaje${g.length === 1 ? "" : "s"} · ${fmt(tot)} ganadas · promedio ${fmt(tot / g.length)}</h3>
           <table><tbody>${g.map((x, i) => `<tr class="top${i + 1}"><td class="pos num">${i + 1}</td><td>${linkBov(x.b)} ${chipCasa(x.b)}<span class="sub">activado ${fechaTxt(x.b.activacion)}</span></td><td class="num">${fmt(x.gan)}</td><td class="num">${fmt(x.b.actuales)} <span class="sub">actuales</span></td></tr>`).join("")}</tbody></table></div>`;
@@ -505,7 +549,7 @@
     const lista = filtrar(bovedas().filter(b => !b.inactivo), false);
     const datos = [...CASAS, "Sin casa"].map(k => {
       const g = lista.filter(b => casaDe(b) === k);
-      const gan = g.reduce((s, b) => s + sumaPeriodo(b, per).mas, 0);
+      const gan = g.reduce((s, b) => s + ganado(b, per), 0);
       const act = g.reduce((s, b) => s + (b.actuales || 0), 0);
       return { k, n: g.length, gan, act, prom: g.length ? gan / g.length : 0, actuales: g.filter(b => !b.exCasa).length };
     });
@@ -530,7 +574,7 @@
     if (!bovedas().length) return vacioCenso(c);
     const per = pref.periodo ? +pref.periodo : null;
     const grupos = agruparJugadores(bovedas().filter(b => !b.inactivo)).map(g => ({
-      g, act: g.reduce((s, b) => s + (b.actuales || 0), 0), gan: g.reduce((s, b) => s + sumaPeriodo(b, per).mas, 0)
+      g, act: g.reduce((s, b) => s + (b.actuales || 0), 0), gan: g.reduce((s, b) => s + ganado(b, per), 0)
     })).sort((a, b) => b.act - a.act);
     const q = sinTildes(pref.buscar).toLowerCase().trim();
     const vis = grupos.filter(x => !q || x.g.some(b => sinTildes(b.dueno).toLowerCase().includes(q)));
@@ -561,7 +605,7 @@
         $("#p-leer").disabled = true;
         try {
           const item = { tid: t, num: aNumero(document.title) || 0, nombre: "", slug: (location.pathname.match(/^\/t\d+(?:p\d+)?-(.*)$/) || [])[1] || "boveda" };
-          censo.bovedas[t] = await leerBoveda(item, null, true, (i, n) => { const e = $("#p-est"); if (e) e.textContent = `Leyendo página ${i} de ${n}…`; });
+          censo.bovedas[t] = await leerBoveda(item, null, "completa", (i, n) => { const e = $("#p-est"); if (e) e.textContent = `Leyendo página ${i} de ${n}…`; });
           guardarGM(K_CENSO, censo); pintar();
         } catch (e) { const el = $("#p-est"); if (el) el.textContent = "No pude leerla: " + e.message; $("#p-leer").disabled = false; }
       };
@@ -589,6 +633,7 @@
         <button class="b" id="p-releer" title="Volver a leer esta bóveda">⟲ Releer bóveda</button>
         <button class="b" id="p-copiar" title="12 números separados por tabulador, para Excel">Copiar números</button>
         <button class="b" id="p-app" title="Mandar a la app de GitHub">Enviar a la app</button></div>
+      ${b.completo ? "" : `<p class="nota" style="margin:-4px 0 8px;color:#c2489a">✧ De esta bóveda solo leí la cabecera. Tocá «⟲ Releer bóveda» para traer todos sus movimientos y ver los meses.</p>`}
       <p class="nota" style="margin:-4px 0 12px">${linkBov(b)} ${chipCasa(b)} · activado ${fechaTxt(b.activacion)} · ${fmt(b.actuales)} grageas actuales · <span id="p-est">leída ${new Date(b.leido).toLocaleDateString("es-AR")}</span></p>
       <div class="tarjetas">
         <div class="t"><div class="tt">◎ Meta anual</div><input id="p-ma" type="number" min="0" value="${m.anual ?? ""}" placeholder="0"></div>
@@ -612,7 +657,7 @@
     $("#p-app").onclick = () => { GM_setValue(K_ENVIO, JSON.stringify({ nombre: b.dueno, anio: String(anio), metrica, meses: v, cuando: Date.now() })); $("#p-est").textContent = "listo ✓ abrí la app y tocá «Cargar»"; };
     $("#p-releer").onclick = async () => {
       $("#p-releer").disabled = true;
-      try { censo.bovedas[b.tid] = await leerBoveda({ tid: b.tid, num: b.num, nombre: b.nombreLista, slug: b.slug }, b, false, (i, n) => { const e = $("#p-est"); if (e) e.textContent = `leyendo página ${i} de ${n}…`; }); guardarGM(K_CENSO, censo); pintar(); }
+      try { censo.bovedas[b.tid] = await leerBoveda({ tid: b.tid, num: b.num, nombre: b.nombreLista, slug: b.slug }, b, "movs", (i, n) => { const e = $("#p-est"); if (e) e.textContent = `leyendo página ${i} de ${n}…`; }); guardarGM(K_CENSO, censo); pintar(); }
       catch (e) { $("#p-est").textContent = "error: " + e.message; $("#p-releer").disabled = false; }
     };
   }
@@ -638,25 +683,27 @@
     const n = bovedas().length;
     c.innerHTML = `
       <div class="caja"><h3>✦ Actualizar el censo</h3>
-        <p class="nota" style="margin:0 0 10px">Lee la Lista de Bóvedas y después cada bóveda, con una pausa entre página y página para no saturar el foro.
-        La primera vez lee todo (puede tardar unos minutos); después solo lo nuevo. Si lo cortás, la próxima vez sigue desde donde quedó.</p>
+        <p class="nota" style="margin:0 0 10px"><b>Actualizar</b> lee solo la cabecera y el perfil de cada bóveda (la primera página): alcanza para el ranking, lo ganado en toda la historia, camadas, casas, jugadores e inactivos. Tarda un minuto más o menos.<br>
+        <b>Leer movimientos</b> recorre además todas las páginas para tener lo ganado por año y por mes (filtros por año, tabla mes a mes, Mi progresión). La primera vez tarda bastante; después solo lee las páginas nuevas. Si lo cortás, sigue desde donde quedó.</p>
         <div class="fila" style="margin:0">
-          <button class="b pri" id="d-act">✧ Actualizar censo</button>
+          <button class="b pri" id="d-act">✧ Actualizar</button>
+          <button class="b" id="d-movs" title="Lee todas las páginas de cada bóveda (solo las nuevas si ya se leyeron)">▦ Leer movimientos (por año y mes)</button>
           <button class="b" id="d-todo" title="Vuelve a leer todas las páginas de todas las bóvedas">⟲ Releer todo desde cero</button>
           <button class="b" id="d-cancel" disabled>Detener</button>
         </div>
         <div class="prog"><i id="d-bar"></i></div>
-        <p class="nota" id="d-est">${n ? `${n} bóvedas en el censo · ${bovedas().filter(b => b.inactivo).length} inactivas · última actualización ${censo.actualizado ? new Date(censo.actualizado).toLocaleString("es-AR") : "—"}` : "Todavía no hay datos."}</p>
+        <p class="nota" id="d-est">${n ? `${n} bóvedas en el censo · ${bovedas().filter(b => b.inactivo).length} inactivas · ${bovedas().filter(b => b.completo).length} con movimientos leídos · última actualización ${censo.actualizado ? new Date(censo.actualizado).toLocaleString("es-AR") : "—"}` : "Todavía no hay datos."}</p>
         <div id="d-err" class="err"></div>
       </div>
       <div class="caja"><h3>✦ Exportar</h3>
         <div class="fila" style="margin:0"><button class="b" id="d-csv" ${n ? "" : "disabled"}>⇩ CSV (para Excel)</button><button class="b" id="d-json" ${n ? "" : "disabled"}>⇩ JSON (copia completa)</button><button class="b" id="d-imp">⇧ Importar JSON</button><input type="file" id="d-file" accept=".json,application/json" hidden></div>
         <p class="nota">El CSV trae una fila por personaje con sus datos de perfil y lo ganado/gastado de cada año.</p>
       </div>
-      <div class="caja"><h3>✦ Ojo con</h3><p class="nota" style="margin:0">«Ganadas» suma lo que se anota como «+» en cada post de bóveda. «Totales» y «Actuales» son los del último post. «Ganado / mes de vida» = (totales − iniciales) ÷ meses desde la activación. Casa, activación, raza, etapa y multicuentas salen del mini-perfil del dueño.</p></div>`;
-    if (escaneo) { $("#d-act").disabled = $("#d-todo").disabled = true; $("#d-cancel").disabled = false; }
-    $("#d-act").onclick = () => escanear(false);
-    $("#d-todo").onclick = () => escanear(true);
+      <div class="caja"><h3>✦ Ojo con</h3><p class="nota" style="margin:0">Iniciales, totales y actuales salen de la cabecera de la bóveda si está al día; si no, del último post. En «toda la historia», ganadas = totales − iniciales y gastadas = totales − actuales. En un año, se suman los «+» y «−» de los posts de ese año (la veteranía no cuenta como ganada). «Ganado / mes de vida» = (totales − iniciales) ÷ meses desde la activación. Casa, activación, raza, etapa y multicuentas salen del mini-perfil del dueño.</p></div>`;
+    if (escaneo) { $("#d-act").disabled = $("#d-movs").disabled = $("#d-todo").disabled = true; $("#d-cancel").disabled = false; }
+    $("#d-act").onclick = () => escanear("rapida");
+    $("#d-movs").onclick = () => escanear("movs");
+    $("#d-todo").onclick = () => escanear("completa");
     $("#d-cancel").onclick = () => { if (escaneo) escaneo.cancelar = true; };
     $("#d-csv").onclick = exportarCSV;
     $("#d-json").onclick = () => descargar(`censo-bovedas-${hoyISO()}.json`, JSON.stringify(censo), "application/json");
@@ -668,9 +715,9 @@
     };
   }
 
-  async function escanear(completo) {
+  async function escanear(modo) {
     if (escaneo) return;
-    escaneo = { cancelar: false, errores: [] };
+    escaneo = { cancelar: false, errores: [], inicio: Date.now() };
     const est = t => { const e = ven && $("#d-est"); if (e) e.textContent = t; };
     const bar = p => { const e = ven && $("#d-bar"); if (e) e.style.width = (p * 100).toFixed(1) + "%"; };
     if (ven) pintar();
@@ -678,15 +725,16 @@
       est("Leyendo la Lista de Bóvedas…");
       const lista = await leerLista();
       censo.lista = lista;
-      // si se cortó a mitad, seguir con las que faltan primero
-      const orden = [...lista].sort((a, b) => (censo.bovedas[a.tid] ? 1 : 0) - (censo.bovedas[b.tid] ? 1 : 0));
+      // primero las nunca leídas, después las leídas hace más tiempo (así, si se corta, se retoma solo)
+      const cuando = it => { const b = censo.bovedas[it.tid]; return !b ? 0 : (modo !== "rapida" && !b.completo) ? 1 : b.leido || 2; };
+      const orden = [...lista].sort((a, b) => cuando(a) - cuando(b));
       for (let i = 0; i < orden.length; i++) {
         if (escaneo.cancelar) { est(`Detenido en ${i} de ${orden.length}. Lo leído quedó guardado.`); break; }
         const it = orden[i];
         bar(i / orden.length);
         try {
           const previo = censo.bovedas[it.tid];
-          censo.bovedas[it.tid] = await leerBoveda(it, previo, completo, (p, n) => est(`(${i + 1}/${orden.length}) ${it.nombre} · página ${p} de ${n}`));
+          censo.bovedas[it.tid] = await leerBoveda(it, previo, modo, (p, n) => est(`(${i + 1}/${orden.length}) ${it.nombre} · página ${p} de ${n}`));
           est(`(${i + 1}/${orden.length}) ${it.nombre} ✓`);
           guardarGM(K_CENSO, censo);
         } catch (e) { escaneo.errores.push(`${it.nombre}: ${e.message}`); }
@@ -713,11 +761,11 @@
   }
   function exportarCSV() {
     const as = anios().sort((a, b) => a - b);
-    const cab = ["Bóveda", "Personaje", "Casa", "Ex-casa", "Inactivo", "Activación", "Raza", "Etapa", "Curso", "Facción", "Multicuenta", "Iniciales", "Actuales", "Totales", "Último movimiento", ...as.flatMap(a => [`Ganadas ${a}`, `Gastadas ${a}`]), "Link"];
+    const cab = ["Bóveda", "Personaje", "Casa", "Ex-casa", "Inactivo", "Activación", "Raza", "Etapa", "Curso", "Facción", "Multicuenta", "Iniciales", "Actuales", "Totales", "Último movimiento", ...as.flatMap(a => [`Ganadas ${a}`, `Gastadas ${a}`]), "Ganadas (historia)", "Gastadas (historia)", "Link"];
     const q = v => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const filasCsv = bovedas().sort((a, b) => (b.actuales || 0) - (a.actuales || 0)).map(b => [
       b.num, b.dueno, casaDe(b), b.exCasa ? "sí" : "", b.inactivo ? "sí" : "", fechaTxt(b.activacion), b.raza, b.etapa, b.curso, b.faccion, b.multicuenta,
-      b.iniciales, b.actuales, b.totales, fechaTxt(b.ultimoMov), ...as.flatMap(a => { const s = sumaPeriodo(b, a); return [s.mas, s.menos]; }),
+      b.iniciales, b.actuales, b.totales, fechaTxt(b.ultimoMov), ...as.flatMap(a => { const s = sumaPeriodo(b, a); return [s.mas, s.menos]; }), ganado(b), gastado(b),
       location.origin + `/t${b.tid}-${b.slug || "boveda"}`].map(q).join(";"));
     descargar(`censo-bovedas-${hoyISO()}.csv`, "﻿" + [cab.map(q).join(";"), ...filasCsv].join("\r\n"), "text/csv;charset=utf-8");
   }
