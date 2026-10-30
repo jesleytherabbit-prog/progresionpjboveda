@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bóveda → Progresión de Personaje
 // @namespace    hp-avada-kedavra.progresion
-// @version      2.2
+// @version      2.3
 // @description  Censo de todas las bóvedas (ranking de grageas, camadas por activación, casas, jugadores, inactivos) + progresión anual de cada personaje.
 // @match        https://hp-avada-kedavra.foroactivo.com/*
 // @match        https://*.github.io/*
@@ -182,7 +182,7 @@
       if (!f || !c) return;
       const { mas, menos } = leerMovimiento(c.mov, c.ini, c.act);
       // la veteranía (y similares) forman parte de las iniciales, no son grageas ganadas
-      const esInicial = /veteran|grageas? iniciales|bienvenida/i.test(c.concepto + " " + c.mov) ? 1 : 0;
+      const esInicial = /veteran|etapa|grageas? iniciales|bienvenida/i.test(c.concepto + " " + c.mov) ? 1 : 0;
       movs.set(pid || `${fechaNum(f)}-${movs.size}`, [pid, f[0], f[1], f[2], esInicial ? 0 : mas, menos, c.act, c.tot, c.ini, esInicial ? mas : 0]);
     });
   }
@@ -210,6 +210,7 @@
       return m ? aNumero(m[1]) : null;
     };
     const cabIni = deCab("iniciales"), cabTot = deCab("totales"), cabAct = deCab("actuales");
+    const cabGen = deCab("generales"); // desglose de la cabecera: lo ganado activamente
     const edic = primero ? (primero.textContent.match(/[UÚ]ltima edici[oó]n por .+? el (.+?),?\s*editado/i) || [])[1] : null;
     const fechaEdic = edic ? leerFechaPost(edic) : null;
 
@@ -230,8 +231,11 @@
     // la cabecera actualizada es requisito del foro: si está, manda ella; si no, el último post leído
     const postTot = ultTot ? ultTot[7] : null;
     const usarCab = cabTot != null && cabAct != null;
-    const iniciales = cabIni != null ? cabIni
-      : (lista.length && lista[0][8] != null ? lista[0][8] + lista.reduce((s, m) => s + (m[9] || 0), 0) : null);
+    // grageas iniciales = las de apertura + todo lo que llegó por veteranía o por etapa (no son ganadas activamente)
+    const iniPost = lista.length && lista[0][8] != null ? lista[0][8] + lista.reduce((s, m) => s + (m[9] || 0), 0) : null;
+    const totFinal = usarCab ? cabTot : (postTot != null ? postTot : cabTot);
+    let iniciales = Math.max(cabIni ?? 0, iniPost ?? 0) || (cabIni ?? iniPost);
+    if (cabGen != null && totFinal != null && totFinal - cabGen >= 0) iniciales = totFinal - cabGen; // si la cabecera trae «Generales», manda
     let ultimoMov = ult ? [ult[1], ult[2], ult[3]] : null;
     if (previo && previo.ultimoMov && fechaNum(previo.ultimoMov) > fechaNum(ultimoMov)) ultimoMov = previo.ultimoMov;
     if (usarCab && fechaEdic && fechaNum(fechaEdic) > fechaNum(ultimoMov)) ultimoMov = fechaEdic;
@@ -240,7 +244,7 @@
       dueno, uid, ...perfil,
       iniciales,
       actuales: usarCab ? cabAct : (ultAct ? ultAct[6] : cabAct),
-      totales: usarCab ? cabTot : (postTot != null ? postTot : cabTot),
+      totales: totFinal,
       fuente: usarCab ? "cabecera" : "posts",
       ultimoMov, paginas: n, paginasLeidas: leidas, completo, movs: lista, leido: Date.now()
     };
@@ -699,7 +703,7 @@
         <div class="fila" style="margin:0"><button class="b" id="d-csv" ${n ? "" : "disabled"}>⇩ CSV (para Excel)</button><button class="b" id="d-json" ${n ? "" : "disabled"}>⇩ JSON (copia completa)</button><button class="b" id="d-imp">⇧ Importar JSON</button><input type="file" id="d-file" accept=".json,application/json" hidden></div>
         <p class="nota">El CSV trae una fila por personaje con sus datos de perfil y lo ganado/gastado de cada año.</p>
       </div>
-      <div class="caja"><h3>✦ Ojo con</h3><p class="nota" style="margin:0">Iniciales, totales y actuales salen de la cabecera de la bóveda si está al día; si no, del último post. En «toda la historia», ganadas = totales − iniciales y gastadas = totales − actuales. En un año, se suman los «+» y «−» de los posts de ese año (la veteranía no cuenta como ganada). «Ganado / mes de vida» = (totales − iniciales) ÷ meses desde la activación. Casa, activación, raza, etapa y multicuentas salen del mini-perfil del dueño.</p></div>`;
+      <div class="caja"><h3>✦ Ojo con</h3><p class="nota" style="margin:0">Iniciales, totales y actuales salen de la cabecera de la bóveda; si no tiene, del último post. Las iniciales incluyen la apertura, la veteranía y los cambios de etapa: nada de eso cuenta como ganado. Si la cabecera trae el desglose «Generales», eso es lo ganado. En «toda la historia», ganadas = totales − iniciales y gastadas = totales − actuales. En un año, se suman los «+» y «−» de los posts de ese año (la veteranía no cuenta como ganada). «Ganado / mes de vida» = (totales − iniciales) ÷ meses desde la activación. Casa, activación, raza, etapa y multicuentas salen del mini-perfil del dueño.</p></div>`;
     if (escaneo) { $("#d-act").disabled = $("#d-movs").disabled = $("#d-todo").disabled = true; $("#d-cancel").disabled = false; }
     $("#d-act").onclick = () => escanear("rapida");
     $("#d-movs").onclick = () => escanear("movs");
