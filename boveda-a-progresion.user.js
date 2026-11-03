@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bóveda → Progresión de Personaje
 // @namespace    hp-avada-kedavra.progresion
-// @version      2.8
+// @version      3.0
 // @description  Censo de todas las bóvedas (ranking de grageas, camadas por activación, casas, jugadores, inactivos) + progresión anual de cada personaje.
 // @match        https://hp-avada-kedavra.foroactivo.com/*
 // @match        https://*.github.io/*
@@ -137,11 +137,14 @@
     });
     // solo cuentan los campos de grageas (hay cajas de Puntos Legendarios con el mismo formato)
     const claves = Object.keys(campos).filter(k => !/legendari/.test(k));
-    if (!claves.length) return null;
+    const clavePL = re => Object.keys(campos).find(k => /legendari/.test(k) && re.test(k));
+    const plAct = clavePL(/actual/) ? aNumero(campos[clavePL(/actual/)]) : null;
+    const plTot = clavePL(/total/) ? aNumero(campos[clavePL(/total/)]) : null;
+    if (!claves.length) return (plAct != null || plTot != null) ? { soloPL: true, plAct, plTot } : null;
     const busca = re => { const k = claves.find(k => re.test(k) && /gra[gj]ea/.test(k)) || claves.find(k => re.test(k)); return k ? campos[k] : null; };
     const mov = busca(/añad|quit/);
     if (mov == null && busca(/actual/) == null) return null; // no es de grageas (ej. "Nuevo inventario")
-    return { ini: aNumero(busca(/inicial/)), mov: mov || "", tieneMov: mov != null, act: aNumero(busca(/actual/)), tot: aNumero(busca(/total/)), concepto: (busca(/enlace|concepto|motivo/) || "") + " " + [...caja.querySelectorAll("a[href]")].map(a => decodeURIComponent(a.getAttribute("href"))).join(" ") };
+    return { plAct, plTot, ini: aNumero(busca(/inicial/)), mov: mov || "", tieneMov: mov != null, act: aNumero(busca(/actual/)), tot: aNumero(busca(/total/)), concepto: (busca(/enlace|concepto|motivo/) || "") + " " + [...caja.querySelectorAll("a[href]")].map(a => { const h = a.getAttribute("href"); try { return decodeURIComponent(h); } catch (_) { return h; } }).join(" ") };
   }
 
   // grupos del foro: /g3-casa-gryffindor … /g10-ex-slytherin
@@ -182,6 +185,32 @@
   }
 
   const RE_INICIAL = /veteran|etapa|grageas? iniciales|bienvenida/i;
+  // de dónde sale lo ganado y en qué se gasta (se lee del concepto y de los links de cada movimiento)
+  const FUENTES = [
+    ["sueldos", "Sueldos", /sueldo/i],
+    ["puntos", "Canje de puntos", /canje.?de.?puntos|puntos.?de.?experiencia/i],
+    ["clases", "Clases y exámenes", /clase|examen|tabl[oó]n.?de.?notas/i],
+    ["misiones", "Misiones", /misi[oó]n/i],
+    ["eventos", "Eventos y acontecimientos", /evento|acontecimiento|baile|feria|concurso/i],
+    ["oficiales", "Roles oficiales", /oficial|profeta/i],
+    ["recompensas", "Recompensas y aventuras", /recompensa|aventura/i],
+    ["hitos", "Hitos de empleo", /hito/i],
+    ["quidditch", "Quidditch", /quidditch/i],
+    ["devoluciones", "Devoluciones de canjes", /(?:reintegro|devoluci)\w*\s+(?:de\s+)?canje|canje/i]
+  ];
+  // una devolución de canjes no es ganancia: se descuenta del gasto en canjes
+  function anotarIngreso(d, txt, n) {
+    const k = categoria(FUENTES, txt);
+    if (k === "devoluciones") (d.gastos = d.gastos || []).push(["canjes", -n]);
+    else (d.fuentes = d.fuentes || []).push([k, n]);
+  }
+  const GASTOS = [
+    ["varitas", "Varitas", /varita/i],
+    ["canjes", "Canjes", /canje/i],
+    ["compras", "Compras y objetos", /compra|tienda|objeto|mascota/i]
+  ];
+  const NOMBRE_CAT = Object.fromEntries([...FUENTES, ...GASTOS].map(([k, n]) => [k, n]).concat([["otros", "Otros"], ["sinanotar", "Sin anotar en la bóveda"]]));
+  const categoria = (lista, txt) => (lista.find(([, , re]) => re.test(txt)) || ["otros"])[0];
   const NUMRE = "(\\d{1,3}(?:[ .,\\u00a0\\u202f]\\d{3})+(?!\\d)|\\d+)";
 
   // posts escritos a mano, sin caja: "Grageas actuales: 160 · +525 grageas por sueldos · Grageas restantes: 1.205 · Grageas totales: 106.972"
@@ -210,7 +239,7 @@
       const f = leerFechaPost(autor ? autor.textContent : "");
       if (!f) return;
       const guardar = (orden, d) => movs.set(pid ? pid * 1000 + orden : `${fechaNum(f)}-${movs.size}`,
-        [pid ? pid * 1000 + orden : 0, f[0], f[1], f[2], d.ganado, d.menos, d.act ?? null, d.tot ?? null, d.ini ?? null, d.inicial, d.ajuste, d.vet || 0, d.etapa || 0]);
+        [pid ? pid * 1000 + orden : 0, f[0], f[1], f[2], d.ganado, d.menos, d.act ?? null, d.tot ?? null, d.ini ?? null, d.inicial, d.ajuste, d.vet || 0, d.etapa || 0, d.fuentes || [], d.gastos || [], d.plAct ?? null, d.plTot ?? null]);
       // a qué tipo de «inicial» corresponde un texto: veteranía, cambio de etapa u otro (apertura, bienvenida…)
       const tipo = (d, txt, n) => { d.inicial += n; if (/veteran/i.test(txt)) d.vet = (d.vet || 0) + n; else if (/etapa/i.test(txt)) d.etapa = (d.etapa || 0) + n; };
       // un mismo post puede traer muchas cajas (ej. 28 movimientos juntos): cada caja es un movimiento
@@ -219,12 +248,17 @@
         cajas.forEach((caja, i) => {
           const c = leerCaja(caja);
           if (!c) return;
+          if (c.soloPL) { guardar(i, { ganado: 0, menos: 0, inicial: 0, ajuste: 0, plAct: c.plAct, plTot: c.plTot }); return; }
           const r = leerMovimiento(c.mov, c.ini, c.act);
           const d = { ganado: 0, menos: r.menos, inicial: 0, act: c.act, tot: c.tot, ini: c.ini, ajuste: 0 };
           // la veteranía y los cambios de etapa son grageas INICIALES, nunca ganadas
           if (RE_INICIAL.test(c.concepto + " " + c.mov)) tipo(d, c.concepto + " " + c.mov, r.mas); else d.ganado = r.mas;
           // corrección/revisión (típicamente de moderación): trae totales pero no dice qué se añadió → no es ganado
           if (!c.tieneMov) d.ajuste = 1;
+          const txt = c.concepto + " " + c.mov;
+          if (d.ganado) anotarIngreso(d, txt, d.ganado);
+          if (d.menos) (d.gastos = d.gastos || []).push([categoria(GASTOS, txt), d.menos]);
+          d.plAct = c.plAct; d.plTot = c.plTot;
           guardar(i, d);
         });
         return;
@@ -232,13 +266,13 @@
       const cont = post.querySelector(".content");
       const l = cont && leerLibre(cont);
       if (!l) return;
-      const d = { ganado: 0, menos: 0, inicial: 0, act: l.act, tot: l.tot, ini: l.ini, ajuste: 0 };
+      const d = { ganado: 0, menos: 0, inicial: 0, act: l.act, tot: l.tot, ini: l.ini, ajuste: 0, fuentes: [], gastos: [] };
       const todoInicial = RE_INICIAL.test(l.enlaces) && l.partes.length === 1;
       l.partes.forEach(p => {
-        if (p.signo < 0) d.menos += p.n;
+        if (p.signo < 0) { d.menos += p.n; d.gastos.push([categoria(GASTOS, p.concepto), p.n]); }
         else if (RE_INICIAL.test(p.concepto)) tipo(d, p.concepto, p.n);
         else if (todoInicial) tipo(d, l.enlaces, p.n);
-        else d.ganado += p.n;
+        else { d.ganado += p.n; anotarIngreso(d, p.concepto, p.n); }
       });
       guardar(0, d);
     });
@@ -300,6 +334,7 @@
     };
     const cabIni = deCab("iniciales"), cabTot = deCab("totales"), cabAct = deCab("actuales");
     const cabGen = deCab("generales"); // desglose de la cabecera: lo ganado activamente
+    const cabPL = lab => { const m = cab.match(new RegExp(`legendarios\\s+${lab}\\s*[:»}]?\\s*(?:\\|\\s*)*(\\d{1,3}(?:[ .,]\\d{3})+(?!\\d)|\\d+)`, "i")); return m ? aNumero(m[1]) : null; };
     const edic = primero ? (primero.textContent.match(/[UÚ]ltima edici[oó]n por .+? el (.+?),?\s*editado/i) || [])[1] : null;
     const fechaEdic = edic ? leerFechaPost(edic) : null;
 
@@ -344,6 +379,8 @@
       tid: item.tid, num: item.num, nombreLista: item.nombre, slug,
       dueno, uid, ...perfil,
       iniciales, iniVerif, desglose,
+      plAct: (lista.filter(m => m[15] != null).pop() || [])[15] ?? cabPL("actuales"),
+      plTot: (lista.filter(m => m[16] != null).pop() || [])[16] ?? cabPL("totales"),
       actuales: usarCab ? cabAct : (ultAct ? ultAct[6] : cabAct),
       totales: totFinal,
       fuente: usarCab ? "cabecera" : "posts",
@@ -494,7 +531,7 @@
   // ─────────────────────────── estado de la UI ───────────────────────────
   let censo = leerGM(K_CENSO, { actualizado: 0, lista: [], bovedas: {} });
   let metas = leerGM(K_METAS, {});
-  let pref = Object.assign({ tab: "ranking", orden: "actuales", dir: -1, anioAct: "", casa: "", etapa: "", periodo: "", buscar: "", pjTid: "", pjAnio: "", pjMetrica: "ganadas" }, leerGM(K_PREF, {}));
+  let pref = Object.assign({ tab: "ranking", orden: "actuales", dir: -1, anioAct: "", casa: "", etapa: "", periodo: "", buscar: "", pjTid: "", pjAnio: "", pjMetrica: "ganadas", ecoFuente: "sueldos", ecoGasto: "canjes", objetivo: 2500 }, leerGM(K_PREF, {}));
   const guardarPref = () => guardarGM(K_PREF, pref);
   let raizUI, ven, escaneo = null;
 
@@ -529,7 +566,7 @@
           <h1>✿ CENSO DE BÓVEDAS <small id="sub"></small></h1>
           <button class="x" title="Cerrar">×</button>
           <div class="tabs">
-            ${[["progresion","Mi progresión"],["ranking","Ranking"],["camadas","Camadas"],["casas","Casas"],["jugadores","Jugadores"],["inactivos","Inactivos"],["datos","Datos"]]
+            ${[["progresion","Mi progresión"],["ranking","Ranking"],["camadas","Camadas"],["casas","Casas"],["economia","Economía"],["jugadores","Jugadores"],["inactivos","Inactivos"],["datos","Datos"]]
               .map(([k, v]) => `<button class="tab" data-tab="${k}">${v}</button>`).join("")}
           </div>
         </div>
@@ -555,7 +592,7 @@
     const n = bovedas().length;
     $("#sub").textContent = n ? `${n} bóvedas · ${censo.actualizado ? "actualizado " + new Date(censo.actualizado).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : ""}` : "";
     const c = $("#cuerpo");
-    ({ progresion: tabProgresion, ranking: () => tabRanking(false), inactivos: () => tabRanking(true), camadas: tabCamadas, casas: tabCasas, jugadores: tabJugadores, datos: tabDatos }[pref.tab] || tabDatos)(c);
+    ({ progresion: tabProgresion, ranking: () => tabRanking(false), inactivos: () => tabRanking(true), camadas: tabCamadas, casas: tabCasas, economia: tabEconomia, jugadores: tabJugadores, datos: tabDatos }[pref.tab] || tabDatos)(c);
   }
 
   const vacioCenso = c => {
@@ -757,6 +794,7 @@
       ${b.completo ? "" : `<p class="nota" style="margin:-4px 0 8px;color:#c2489a">✧ De esta bóveda solo leí la cabecera. Tocá «⟲ Releer bóveda» para traer todos sus movimientos y ver los meses.</p>`}
       <p class="nota" style="margin:-4px 0 12px">${linkBov(b)} ${chipCasa(b)} · activado ${fechaTxt(b.activacion)} · ${fmt(b.actuales)} grageas actuales · <span id="p-est">leída ${new Date(b.leido).toLocaleDateString("es-AR")}</span></p>
       ${desgloseHTML(b)}
+      ${ritmoHTML(b, anio)}
       <div class="tarjetas">
         <div class="t"><div class="tt">◎ Meta anual</div><input id="p-ma" type="number" min="0" value="${m.anual ?? ""}" placeholder="0"></div>
         <div class="t"><div class="tt">▦ Meta mensual <button class="b" id="p-div" style="padding:1px 6px;font-size:10px">÷12</button></div><input id="p-mm" type="number" min="0" value="${m.mensual ?? ""}" placeholder="0"></div>
@@ -768,6 +806,8 @@
       <div class="meses">${MESES.map((mn, i) => { const pm = metaMes ? v[i] / metaMes : 0; return `<div class="mes${i === mesHoy ? " hoy" : ""}"><div class="mn">${mn}</div><div class="mv">${fmt(v[i])}</div><div class="ma">acum. ${fmt(acum[i])}</div><div class="mp${pm >= 1 ? " ok" : ""}">${Math.round(pm * 100)}%</div></div>`; }).join("")}</div>
       <div class="caja">${grafico(v, acum, meta)}</div>`;
 
+    const obj = $("#p-obj");
+    if (obj) obj.onchange = () => { pref.objetivo = Math.max(0, +obj.value || 0); guardarPref(); pintar(); };
     const guardaMeta = () => { metas[llave] = { anual: $("#p-ma").value === "" ? null : +$("#p-ma").value, mensual: $("#p-mm").value === "" ? null : +$("#p-mm").value }; guardarGM(K_METAS, metas); };
     $("#p-ma").onchange = () => { guardaMeta(); pintar(); };
     $("#p-mm").onchange = () => { guardaMeta(); pintar(); };
@@ -782,6 +822,100 @@
       try { censo.bovedas[b.tid] = await leerBoveda({ tid: b.tid, num: b.num, nombre: b.nombreLista, slug: b.slug }, b, "movs", (i, n) => { const e = $("#p-est"); if (e) e.textContent = `leyendo página ${i} de ${n}…`; }); guardarGM(K_CENSO, censo); pintar(); }
       catch (e) { $("#p-est").textContent = "error: " + e.message; $("#p-releer").disabled = false; }
     };
+  }
+
+  // ─────────── Economía: fuentes de ingreso, gastos y Puntos Legendarios
+  function porCategoria(b, anio, idx) {
+    const t = {};
+    for (const m of b.movs || []) {
+      if (anio && m[1] !== anio) continue;
+      for (const [k, v] of m[idx] || []) t[k] = (t[k] || 0) + v;
+    }
+    return t;
+  }
+  // ingresos por fuente; lo que subió en totales sin un movimiento que lo explique queda «sin anotar»
+  function fuentesDe(b, anio) {
+    const t = porCategoria(b, anio, 13);
+    const anotado = Object.values(t).reduce((a, c) => a + c, 0);
+    const gan = ganado(b, anio);
+    if (gan != null && gan > anotado) t.sinanotar = gan - anotado;
+    return t;
+  }
+  const gastosDe = (b, anio) => porCategoria(b, anio, 14);
+
+  // lo ganado (o gastado) en los últimos n meses (incluye el actual)
+  function ganadoUltimos(b, n, gastos) {
+    const h = new Date(); let y = h.getFullYear(), m = h.getMonth(), t = 0;
+    for (let i = 0; i < n; i++) { t += gastos ? sumaPeriodo(b, y, m).menos : ganadoMes(b, y, m); if (--m < 0) { m = 11; y--; } }
+    return t;
+  }
+  const mesesTxt = n => n < 1 ? "menos de un mes" : n < 1.5 ? "1 mes" : n < 18 ? `${Math.round(n)} meses` : `${(n / 12).toLocaleString("es-AR", { maximumFractionDigits: 1 })} años`;
+
+  function ritmoHTML(b, anio) {
+    if (!b.completo) return "";
+    const vida = mesesDesde(b.activacion) || 12;
+    const ventana = Math.min(12, vida);
+    const ult = ganadoUltimos(b, ventana);
+    const porMes = ult / ventana;
+    const gastoMes = ganadoUltimos(b, ventana, true) / ventana, netoMes = porMes - gastoMes;
+    const objetivo = +pref.objetivo || 0;
+    const falta = Math.max(0, objetivo - (b.actuales || 0));
+    const fechaEst = n => { const d = new Date(); d.setMonth(d.getMonth() + Math.ceil(n)); return `${MESES[d.getMonth()].toLowerCase()} de ${d.getFullYear()}`; };
+    let texto;
+    if (!objetivo) texto = "Poné un objetivo para calcular cuánto te lleva.";
+    else if (porMes <= 0) texto = `En los últimos ${ventana} meses no ganó grageas, así que no puedo calcular un ritmo.`;
+    else if (!falta) texto = `Ya tiene ${fmt(b.actuales)} grageas actuales: el objetivo está cumplido ✧. Juntar ${fmt(objetivo)} desde cero le llevaría ${mesesTxt(objetivo / porMes)}.`;
+    else texto = `Con sus ${fmt(b.actuales)} actuales le faltan <b>${fmt(falta)}</b>. A este ritmo las junta en <b>${mesesTxt(falta / porMes)}</b> (para ${fechaEst(falta / porMes)}), si no gasta nada. Desde cero, ${fmt(objetivo)} le llevarían ${mesesTxt(objetivo / porMes)}.<br>` +
+      (netoMes > 0 ? `Si sigue gastando como hasta ahora (unas ${fmt(gastoMes)} por mes), ahorra ${fmt(netoMes)} por mes y llegaría en <b>${mesesTxt(falta / netoMes)}</b> (para ${fechaEst(falta / netoMes)}).`
+                   : `Ojo: en los últimos ${ventana} meses gastó ${fmt(gastoMes)} por mes, igual o más de lo que ganó, así que gastando así no llegaría.`);
+    const f = fuentesDe(b, anio);
+    const totalF = Object.values(f).reduce((a, c) => a + c, 0);
+    const orden = Object.entries(f).sort((x, y) => y[1] - x[1]);
+    return `<div class="caja"><h3>✦ Ritmo y objetivo</h3>
+      <div class="tarjetas" style="margin:6px 0 10px">
+        <div class="t"><div class="tt">Ganado últimos ${ventana} meses</div><div class="tv">${fmt(ult)}</div></div>
+        <div class="t"><div class="tt">Promedio por mes</div><div class="tv">${fmt(porMes)}</div></div>
+        <div class="t"><div class="tt">Por año, a este ritmo</div><div class="tv">${fmt(porMes * 12)}</div></div>
+        <div class="t"><div class="tt">Gasta por mes</div><div class="tv">${fmt(gastoMes)}</div></div>
+        <div class="t"><div class="tt">Quiero juntar</div><input id="p-obj" type="number" min="0" step="100" value="${objetivo || ""}" placeholder="2500"></div>
+      </div>
+      <p class="nota" style="margin:0;font-style:normal;color:#6b3f7a">${texto}</p></div>
+      ${totalF ? `<div class="caja barras"><h3>✦ De dónde vino lo ganado en ${anio}</h3>${orden.map(([k, v]) => `<div class="br"><span class="bn" style="width:170px">${esc(NOMBRE_CAT[k] || k)}</span><span class="bb"><i style="width:${v / orden[0][1] * 100}%;background:${k === "sinanotar" ? "#f3e3f6" : "linear-gradient(90deg,#ffc6e4,#dcc9ff)"}"></i></span><span class="bv">${fmt(v)} <span class="sub" style="display:inline">${Math.round(v / totalF * 100)}%</span></span></div>`).join("")}</div>` : ""}`;
+  }
+
+  function tabEconomia(c) {
+    if (!bovedas().length) return vacioCenso(c);
+    const per = pref.periodo ? +pref.periodo : null;
+    const lista = filtrar(bovedas().filter(b => !b.inactivo));
+    const conMovs = lista.filter(b => b.completo);
+    const sumar = fn => { const t = {}; conMovs.forEach(b => { for (const [k, v] of Object.entries(fn(b, per))) t[k] = (t[k] || 0) + v; }); return t; };
+    const ing = sumar(fuentesDe), gas = sumar(gastosDe);
+    const barras = (t, titulo) => {
+      const e = Object.entries(t).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      if (!e.length) return `<div class="caja"><h3>${titulo}</h3><p class="nota">Sin datos con estos filtros.</p></div>`;
+      const tot = e.reduce((a, [, v]) => a + v, 0);
+      return `<div class="caja barras"><h3>${titulo} · ${fmt(tot)}</h3>${e.map(([k, v]) => `<div class="br"><span class="bn" style="width:170px">${esc(NOMBRE_CAT[k] || k)}</span><span class="bb"><i style="width:${v / e[0][1] * 100}%;background:${k === "sinanotar" ? "#f3e3f6" : "linear-gradient(90deg,#ffc6e4,#dcc9ff)"}"></i></span><span class="bv">${fmt(v)} <span class="sub" style="display:inline">${Math.round(v / tot * 100)}%</span></span></div>`).join("")}</div>`;
+    };
+    const ranking = (clave, fn, sel, id, titulo, opciones) => {
+      const rows = conMovs.map(b => { const t = fn(b, per); const tot = Object.values(t).reduce((a, v) => a + v, 0); return { b, v: t[sel] || 0, pct: tot ? (t[sel] || 0) / tot : 0 }; })
+        .filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 30);
+      return `<div class="caja"><h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${titulo}
+          <select id="${id}">${opciones.map(([k, n]) => opt(k, n, sel)).join("")}</select></h3>
+        ${rows.length ? `<table><tbody>${rows.map((r, i) => `<tr class="top${i + 1}"><td class="pos num">${i + 1}</td><td>${linkBov(r.b)} ${chipCasa(r.b)}</td><td class="num">${fmt(r.v)}</td><td class="num"><span class="sub">${Math.round(r.pct * 100)}% de lo suyo</span></td></tr>`).join("")}</tbody></table>` : `<p class="nota">Nadie con movimientos de este tipo${per ? " en " + per : ""}.</p>`}</div>`;
+    };
+    const pl = lista.filter(b => b.plTot != null || b.plAct != null).sort((a, b) => (b.plTot || 0) - (a.plTot || 0) || (b.plAct || 0) - (a.plAct || 0)).slice(0, 30);
+    const faltan = lista.length - conMovs.length;
+    c.innerHTML = filtros(c) +
+      (faltan ? `<p class="nota" style="margin:-4px 0 10px;color:#c2489a">✧ ${faltan} bóveda${faltan === 1 ? "" : "s"} sin movimientos leídos no entran acá (Datos → «Leer movimientos»).</p>` : "") +
+      `<p class="nota" style="margin:-4px 0 12px">Sale del concepto y los links de cada movimiento. «Sin anotar» es lo que subió en las totales sin un movimiento que diga de dónde vino. Veteranías y cambios de etapa no cuentan.</p>` +
+      `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">
+        <div>${barras(ing, `✦ Ingresos por fuente${per ? " · " + per : ""}`)}${ranking("ing", fuentesDe, pref.ecoFuente, "e-fuente", "✦ Quién gana más por", [...FUENTES.filter(([k]) => k !== "devoluciones").map(([k, n]) => [k, n]), ["otros", "Otros"], ["sinanotar", "Sin anotar"]])}</div>
+        <div>${barras(gas, `✦ Gastos por categoría${per ? " · " + per : ""}`)}${ranking("gas", gastosDe, pref.ecoGasto, "e-gasto", "✦ Quién gasta más en", [...GASTOS.map(([k, n]) => [k, n]), ["otros", "Otros"]])}</div>
+      </div>
+      <div class="caja"><h3>✦ Puntos Legendarios</h3>${pl.length ? `<table><thead><tr><th class="num">#</th><th>Personaje</th><th class="num">Totales</th><th class="num">Actuales</th></tr></thead><tbody>${pl.map((b, i) => `<tr class="top${i + 1}"><td class="pos num">${i + 1}</td><td>${linkBov(b)} ${chipCasa(b)}</td><td class="num">${fmt(b.plTot)}</td><td class="num">${fmt(b.plAct)}</td></tr>`).join("")}</tbody></table>` : `<p class="nota">Todavía no encontré Puntos Legendarios (salen de las cajas de PL o de la cabecera).</p>`}</div>`;
+    enlazarFiltros(c);
+    $("#e-fuente").onchange = e => { pref.ecoFuente = e.target.value; guardarPref(); pintar(); };
+    $("#e-gasto").onchange = e => { pref.ecoGasto = e.target.value; guardarPref(); pintar(); };
   }
 
   function desgloseHTML(b) {
@@ -893,11 +1027,11 @@
   }
   function exportarCSV() {
     const as = anios().sort((a, b) => a - b);
-    const cab = ["Bóveda", "Personaje", "Casa", "Ex-casa", "Inactivo", "Activación", "Raza", "Etapa", "Curso", "Facción", "Multicuenta", "Iniciales", "Apertura", "Veteranías", "Cambios de etapa", "Sin clasificar", "Actuales", "Totales", "Último movimiento", ...as.flatMap(a => [`Ganadas ${a}`, `Gastadas ${a}`]), "Ganadas (historia)", "Gastadas (historia)", "Link"];
+    const cab = ["Bóveda", "Personaje", "Casa", "Ex-casa", "Inactivo", "Activación", "Raza", "Etapa", "Curso", "Facción", "Multicuenta", "Iniciales", "Apertura", "Veteranías", "Cambios de etapa", "Sin clasificar", "Actuales", "Totales", "Último movimiento", ...as.flatMap(a => [`Ganadas ${a}`, `Gastadas ${a}`]), "Ganadas (historia)", "Gastadas (historia)", ...FUENTES.filter(([k]) => k !== "devoluciones").map(([, n]) => `Ganado: ${n}`), "Ganado: Otros", "Ganado: Sin anotar", ...GASTOS.map(([, n]) => `Gastado: ${n}`), "Gastado: Otros", "PL actuales", "PL totales", "Link"];
     const q = v => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const filasCsv = bovedas().sort((a, b) => (b.actuales || 0) - (a.actuales || 0)).map(b => [
       b.num, b.dueno, casaDe(b), b.exCasa ? "sí" : "", b.inactivo ? "sí" : "", fechaTxt(b.activacion), b.raza, b.etapa, b.curso, b.faccion, b.multicuenta,
-      b.iniciales, ...(b.desglose ? [b.desglose.apertura + b.desglose.otros, b.desglose.vet, b.desglose.etapa, b.desglose.sinClasificar] : ["", "", "", ""]), b.actuales, b.totales, fechaTxt(b.ultimoMov), ...as.flatMap(a => [ganadoMes(b, a, null), sumaPeriodo(b, a).menos]), ganado(b), gastado(b),
+      b.iniciales, ...(b.desglose ? [b.desglose.apertura + b.desglose.otros, b.desglose.vet, b.desglose.etapa, b.desglose.sinClasificar] : ["", "", "", ""]), b.actuales, b.totales, fechaTxt(b.ultimoMov), ...as.flatMap(a => [ganadoMes(b, a, null), sumaPeriodo(b, a).menos]), ganado(b), gastado(b), ...(() => { const f = fuentesDe(b), g = gastosDe(b); return [...FUENTES.filter(([k]) => k !== "devoluciones").map(([k]) => f[k] || 0), f.otros || 0, f.sinanotar || 0, ...GASTOS.map(([k]) => g[k] || 0), g.otros || 0]; })(), b.plAct ?? "", b.plTot ?? "",
       location.origin + `/t${b.tid}-${b.slug || "boveda"}`].map(q).join(";"));
     descargar(`censo-bovedas-${hoyISO()}.csv`, "﻿" + [cab.map(q).join(";"), ...filasCsv].join("\r\n"), "text/csv;charset=utf-8");
   }
